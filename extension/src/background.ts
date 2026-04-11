@@ -18,7 +18,7 @@ type AnalysisCacheEntry =
   | { status: "success"; url: string; updatedAt: string; data: Analysis }
   | { status: "error"; url: string; updatedAt: string; message: string };
 
-chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender) => {
+chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender: { tab?: { id?: number; url?: string } }) => {
   if (message.type === "TRIGGER_ANALYSIS") {
     void handleTriggerFromPopup();
     return false;

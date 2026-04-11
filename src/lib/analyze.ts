@@ -1,5 +1,49 @@
-import type { Analysis, AnalyzeRequest } from "@/lib/types";
+import { v4 as uuidv4 } from "uuid";
+import { generateContent } from "./gemini";
+import { buildAnalysisPrompt } from "./prompts";
+import type { Analysis, AnalyzeRequest } from "./types";
 
-export async function analyzeDocument(_request: AnalyzeRequest): Promise<Analysis> {
-  throw new Error("Analysis orchestration not implemented yet.");
+const MAX_TEXT_CHARS = 60_000;
+
+export async function analyze(request: AnalyzeRequest): Promise<Analysis> {
+  const text = request.text.slice(0, MAX_TEXT_CHARS);
+  const language = request.language ?? "en";
+  const readingLevel = request.readingLevel ?? "simple";
+
+  const prompt = buildAnalysisPrompt(text, language, readingLevel);
+  const raw = (await generateContent(prompt)).trim();
+
+  // Some models wrap JSON in code fences; normalize before parsing.
+  const cleaned = raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  let parsed: Omit<Analysis, "auditId" | "createdAt" | "language">;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw new Error("AI returned malformed JSON. Please try again.");
+  }
+
+  const riskScore = Math.max(0, Math.min(100, Math.round(Number(parsed.riskScore) || 0)));
+
+  return {
+    summary: parsed.summary ?? "",
+    riskScore,
+    riskLevel: parsed.riskLevel ?? scoreToLevel(riskScore),
+    keyObligations: Array.isArray(parsed.keyObligations) ? parsed.keyObligations : [],
+    hiddenClauses: Array.isArray(parsed.hiddenClauses) ? parsed.hiddenClauses : [],
+    quiz: Array.isArray(parsed.quiz) ? parsed.quiz.slice(0, 3) : [],
+    language,
+    auditId: uuidv4(),
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function scoreToLevel(score: number): Analysis["riskLevel"] {
+  if (score <= 30) return "low";
+  if (score <= 60) return "medium";
+  if (score <= 80) return "high";
+  return "critical";
 }
