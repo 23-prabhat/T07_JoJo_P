@@ -1,22 +1,36 @@
 "use client";
 
 import { useCallback, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { FileArrowUp, File, X, SpinnerGap } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/language";
+import type { Analysis } from "@/lib/types";
 
 const ACCEPTED_TYPES = ["application/pdf", "text/plain"];
 const ACCEPTED_EXTENSIONS = [".pdf", ".txt"];
 const MAX_SIZE_MB = 10;
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
+const STORAGE_KEY = "clearconsent_analysis";
+
+const READING_LEVELS = [
+  { value: "eli5", label: "ELI5" },
+  { value: "simple", label: "Simple" },
+  { value: "standard", label: "Standard" },
+  { value: "expert", label: "Expert" },
+] as const;
+
+type ReadingLevel = (typeof READING_LEVELS)[number]["value"];
 
 export function UploadZone() {
   const { t, lang } = useLanguage();
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [readingLevel, setReadingLevel] = useState<ReadingLevel>("simple");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const validate = useCallback(
@@ -85,10 +99,37 @@ export function UploadZone() {
   const handleAnalyze = useCallback(async () => {
     if (!file) return;
     setIsUploading(true);
-    // TODO: wire up to /api/upload → /api/analyze → navigate to /analyze
-    await new Promise((r) => setTimeout(r, 1500));
-    setIsUploading(false);
-  }, [file]);
+    setError(null);
+    try {
+      // Step 1: upload + extract text
+      const formData = new FormData();
+      formData.append("file", file);
+      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadData.error ?? "Upload failed.");
+
+      // Step 2: analyze text
+      const analyzeRes = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: uploadData.text,
+          language: lang,
+          readingLevel,
+          source: "web",
+        }),
+      });
+      const analysis: Analysis = await analyzeRes.json();
+      if (!analyzeRes.ok) throw new Error((analysis as { error?: string }).error ?? "Analysis failed.");
+
+      // Step 3: store and navigate
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(analysis));
+      router.push("/analyze");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setIsUploading(false);
+    }
+  }, [file, lang, readingLevel, router]);
 
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -187,20 +228,42 @@ export function UploadZone() {
       )}
 
       {file && (
-        <Button
-          onClick={handleAnalyze}
-          disabled={isUploading}
-          className="w-full h-12 rounded-xl bg-warm text-warm-foreground text-sm font-semibold hover:bg-warm/90 transition-all duration-200 disabled:opacity-60"
-        >
-          {isUploading ? (
-            <>
-              <SpinnerGap size={18} className="animate-spin mr-2" />
-              {t.upload.analyzing}
-            </>
-          ) : (
-            t.upload.analyze
-          )}
-        </Button>
+        <div className="space-y-3">
+          {/* Reading level selector */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground shrink-0">Reading level:</span>
+            <div className="flex items-center gap-0.5 rounded-full border border-foreground/10 bg-foreground/[0.03] p-0.5">
+              {READING_LEVELS.map((lvl) => (
+                <button
+                  key={lvl.value}
+                  onClick={() => setReadingLevel(lvl.value)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold transition-all duration-200 cursor-pointer ${
+                    readingLevel === lvl.value
+                      ? "bg-warm text-warm-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {lvl.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <Button
+            onClick={handleAnalyze}
+            disabled={isUploading}
+            className="w-full h-12 rounded-xl bg-warm text-warm-foreground text-sm font-semibold hover:bg-warm/90 transition-all duration-200 disabled:opacity-60"
+          >
+            {isUploading ? (
+              <>
+                <SpinnerGap size={18} className="animate-spin mr-2" />
+                {t.upload.analyzing}
+              </>
+            ) : (
+              t.upload.analyze
+            )}
+          </Button>
+        </div>
       )}
     </div>
   );
