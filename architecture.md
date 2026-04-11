@@ -20,9 +20,9 @@ We ship three interconnected tools that share a single AI analysis backend:
 |---|---|---|
 | **Web App** | Browser (Next.js) | Upload a PDF/doc, get full risk assessment before signing |
 | **Browser Extension** | Chrome Extension | Understand T&C on any website in real time |
-| **Bot** | Telegram + WhatsApp (Twilio) | Send a document or paste text via chat, get analysis back |
+| **Bot** | Telegram + WhatsApp (Twilio) | Send a selectable-text PDF via chat, get analysis back |
 
-The web app uploads files to `/api/upload` (extracts text), then sends text to `/api/analyze`. The extension and bots already have text, so they call `/api/analyze` directly. Same AI logic, same risk schema, same output — different surfaces.
+The web app uploads files to `/api/upload` (extracts text), then sends text to `/api/analyze`. The extension extracts page text client-side and calls `/api/analyze` directly. Bots are document-only in the demo: they accept PDF uploads, extract text server-side, then call `/api/analyze`. Same AI backend, different ingestion paths per surface.
 
 ---
 
@@ -31,13 +31,13 @@ The web app uploads files to `/api/upload` (extracts text), then sends text to `
 ### Core
 - **Framework**: Next.js 16.2.3 (App Router, React 19, TypeScript)
 - **AI**: Google Gemini 2.5 Pro via `@google/generative-ai`
-- **PDF Text Extraction**: `pdf-parse` (server-side, extracts text from copyable PDFs) with **Tesseract.js** OCR fallback for scanned/image PDFs
-- **OCR**: `tesseract.js` — fallback for scanned PDFs + direct extraction for uploaded images (JPG/PNG)
+- **PDF Text Extraction**: `pdf-parse` (server-side, extracts text from selectable/copyable PDFs)
+- **OCR**: Not part of MVP. Demo scope assumes selectable-text PDFs only
 - **IDs**: `uuid` — audit trail IDs
 - **Styling**: Tailwind CSS 4, shadcn/ui (`radix-lyra` style via `components.json`), Radix UI, Phosphor Icons
-- **Package Manager**: pnpm (single repo with pnpm workspace; extension is a workspace package in `/extension/`)
+- **Package Manager**: pnpm. If `/extension/` is added, update `pnpm-workspace.yaml` to include it explicitly
 
-> **Note:** `pdf-parse`, `tesseract.js`, `uuid`, `@google/generative-ai`, `grammy`, and `twilio` all need to be installed — none are in `package.json` yet.
+> **Note:** `pdf-parse`, `uuid`, `@google/generative-ai`, `grammy`, and `twilio` all need to be installed — none are in `package.json` yet.
 
 ### Browser Extension
 - Vite + React (builds into `extension/dist/`)
@@ -68,7 +68,7 @@ hack-for-impact/
 │   │   ├── globals.css
 │   │   └── api/
 │   │       ├── upload/
-│   │       │   └── route.ts            # POST: file upload + text extraction (PDF/image → text)
+│   │       │   └── route.ts            # POST: file upload + text extraction (PDF/text/image → text)
 │   │       ├── analyze/
 │   │       │   └── route.ts            # POST: core analysis endpoint (used by all 3 products)
 │   │       ├── telegram/
@@ -77,17 +77,17 @@ hack-for-impact/
 │   │           └── route.ts            # POST: Twilio/WhatsApp webhook handler
 │   ├── components/
 │   │   ├── ui/                         # shadcn/ui primitives (button, card, etc.)
-│   │   ├── UploadZone.tsx              # Drag-and-drop PDF/image/text upload
+│   │   ├── UploadZone.tsx              # Drag-and-drop PDF/text upload
 │   │   ├── RiskMeter.tsx               # Visual risk gauge (0–100, color-coded)
 │   │   ├── RiskClauses.tsx             # List of flagged clauses with explanations
 │   │   ├── PlainSummary.tsx            # Plain-language rewrite display
 │   │   ├── ComprehensionQuiz.tsx       # 3-question quiz user must pass before consent
-│   │   ├── AuditTrail.tsx              # Timestamped log of user actions
+│   │   ├── SessionActivity.tsx         # Timestamped log of user actions in the current browser session
 │   │   ├── LanguagePicker.tsx          # Language selector (drives API param)
 │   │   └── ReadingLevelSlider.tsx      # ELI5 → Expert slider
 │   └── lib/
 │       ├── gemini.ts                   # Gemini API client (singleton, all AI calls go here)
-│       ├── pdf.ts                      # PDF/image text extraction (pdf-parse + Tesseract.js OCR fallback)
+│       ├── pdf.ts                      # PDF/text extraction helpers
 │       ├── analyze.ts                  # Core analysis orchestration logic
 │       ├── prompts.ts                  # ALL AI prompts (single source of truth for prompts)
 │       ├── risk.ts                     # Risk scoring helpers
@@ -155,7 +155,7 @@ export interface AnalyzeRequest {
 
 File upload and text extraction endpoint. Used by the web app before calling `/api/analyze`.
 
-**Request:** `multipart/form-data` with a single `file` field (PDF, JPG, or PNG).
+**Request:** `multipart/form-data` with a single `file` field (`.pdf`, `.txt`, `.jpg`, or `.png`).
 
 **Response (200):**
 ```json
@@ -163,9 +163,10 @@ File upload and text extraction endpoint. Used by the web app before calling `/a
 ```
 
 Extraction logic:
-- PDF → `pdf-parse` first; if text < 50 chars, falls back to Tesseract.js OCR
-- JPG/PNG → Tesseract.js OCR directly
-- Error only if both paths fail (or unsupported file type)
+- PDF → `pdf-parse`
+- TXT → decode as UTF-8 text
+- JPG/PNG → optional web-only support if time allows; not part of the bot demo path
+- Error if no usable text is extracted or the file type is unsupported
 
 ---
 
@@ -184,7 +185,8 @@ Pure text analysis endpoint used by all three products.
 ```
 
 **Web app flow:** upload file via `/api/upload` → get text → call `/api/analyze` with text.
-**Extension/bots:** already have text, call `/api/analyze` directly.
+**Extension:** extracts page text client-side, then calls `/api/analyze`.
+**Bots:** upload a PDF, server extracts text, then calls `/api/analyze`.
 
 **Response (200):**
 ```json
@@ -226,16 +228,18 @@ Pure text analysis endpoint used by all three products.
 Telegram webhook. Registered via: `https://api.telegram.org/bot{TOKEN}/setWebhook?url={VERCEL_URL}/api/telegram`
 
 Handles:
-- Text messages: treat as document text, run analysis, reply with formatted summary
-- Document uploads (.pdf, .txt): download file, extract text, run analysis
+- PDF document uploads only
+- Download uploaded PDF, extract text, run analysis, reply with formatted summary
+- Ignore or reject plain text messages during the demo
 
 ### `POST /api/whatsapp`
 
 Twilio webhook (Twilio Sandbox). Registered in Twilio console.
 
 Handles:
-- Text messages: same as Telegram
-- Media messages (PDF): download from Twilio MediaUrl, extract text, run analysis
+- PDF media messages only
+- Download PDF from Twilio `MediaUrl`, extract text, run analysis
+- Ignore or reject plain text messages during the demo
 - Reply format: short summary + risk level emoji + "Reply DETAILS for full report"
 
 ---
@@ -244,7 +248,7 @@ Handles:
 
 ### User Flow
 1. User lands on homepage — sees value prop + upload zone
-2. Uploads a PDF, image (JPG/PNG), or pastes text directly
+2. Uploads a PDF or `.txt` file, or pastes text directly
 3. Selects language + reading level
 4. Clicks "Analyze" → loading state while API processes
 5. Results page shows:
@@ -253,23 +257,23 @@ Handles:
    - **Flagged Clauses**: cards with original text, explanation, severity badge
    - **Key Obligations**: what you're actually agreeing to
    - **Comprehension Quiz**: 3 questions — must pass before "I Understand" button unlocks
-   - **Audit Trail**: timeline of: Uploaded → Analyzed → Quiz Passed → Consented
-6. User clicks "I Understand & Consent" — audit trail is complete, downloadable PDF receipt
+   - **Session Activity**: timeline of: Uploaded → Analyzed → Quiz Passed → Confirmed
+6. User clicks "I Understand" — session activity log is complete
 
 ### Key UI Components
-- `UploadZone`: drag-and-drop, supports PDF + JPG/PNG + .txt + paste. Files are uploaded via `FormData` to `/api/upload` (returns extracted text), then text is sent to `/api/analyze`.
+- `UploadZone`: drag-and-drop, supports PDF + `.txt` + paste. Files are uploaded via `FormData` to `/api/upload` (returns extracted text), then text is sent to `/api/analyze`.
 - `RiskMeter`: animated SVG arc or canvas gauge. Color: green (0–30), yellow (31–60), orange (61–80), red (81–100).
 - `RiskClauses`: expandable cards per clause. Severity badge colors match risk meter.
 - `ComprehensionQuiz`: multi-choice quiz. Tracks score. "I Understand" button disabled until 2/3 correct.
-- `AuditTrail`: vertical timeline component. Events logged client-side with timestamps.
+- `SessionActivity`: vertical timeline component. Events logged client-side with timestamps for the current browser session only.
 
 ---
 
 ## Product 2: Browser Extension (`extension/`)
 
 ### Architecture
-- **Content script** (`content.ts`): injected on every page. Extracts visible text from `<body>`. On activation (via popup or keyboard), sends text to background script.
-- **Background service worker** (`background.ts`): receives text from content script, POSTs to `VITE_API_URL/api/analyze`, returns result to sidebar.
+- **Content script** (`content.ts`): injected on supported pages. On activation, extracts likely legal or transaction text instead of blindly sending the entire `<body>`.
+- **Background service worker** (`background.ts`): receives extracted text, enforces input limits, POSTs to `VITE_API_URL/api/analyze`, returns result to sidebar.
 - **Popup** (`popup.tsx`): small 320px popup. Shows current page risk score (if analyzed). Button to open full sidebar.
 - **Sidebar** (`sidebar.tsx`): injected `<iframe>` or shadow DOM panel on the right side of the page. Shows full analysis: summary, flagged clauses, risk meter.
 
@@ -297,8 +301,9 @@ VITE_API_URL=https://hack-for-impact.vercel.app
 - Register webhook on deploy (one-time curl command)
 - Commands:
   - `/start` — intro message
-  - `/analyze` — prompt user to send document text or PDF
-  - Text/document messages → auto-analyze
+  - `/analyze` — prompt user to send a PDF
+  - PDF document messages → auto-analyze
+  - Plain text messages → reply with "Please upload a PDF document for analysis."
 - Response format:
   ```
   📄 Analysis Complete
@@ -319,7 +324,7 @@ VITE_API_URL=https://hack-for-impact.vercel.app
 - Twilio Sandbox: users join by sending a keyword to Twilio's number
 - No Meta verification needed — perfect for hackathon demos
 - Library: `twilio` SDK
-- Same analysis logic as Telegram
+- Same analysis logic as Telegram, but document-only
 - SMS-friendly response (shorter, no markdown)
 
 ---
@@ -345,39 +350,21 @@ Key prompts:
 ### `pdf.ts`
 ```typescript
 import pdfParse from 'pdf-parse'
-import { createWorker } from 'tesseract.js'
 
 export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
-  // Tier 1: try pdf-parse (fast, works for copyable PDFs)
   const data = await pdfParse(buffer)
   if (data.text && data.text.trim().length >= 50) {
     return data.text
   }
-
-  // Tier 2: fall back to Tesseract.js OCR (scanned/image PDFs)
-  const worker = await createWorker('eng')
-  const { data: ocrData } = await worker.recognize(buffer)
-  await worker.terminate()
-
-  if (!ocrData.text || ocrData.text.trim().length < 10) {
-    throw new Error('Could not extract text from this PDF (neither copyable text nor OCR succeeded).')
-  }
-  return ocrData.text
+  throw new Error('No extractable text found. Please upload a selectable-text PDF.')
 }
 
-export async function extractTextFromImage(buffer: Buffer): Promise<string> {
-  const worker = await createWorker('eng')
-  const { data } = await worker.recognize(buffer)
-  await worker.terminate()
-
-  if (!data.text || data.text.trim().length < 10) {
-    throw new Error('Could not extract text from this image.')
-  }
-  return data.text
+export async function extractTextFromTXT(buffer: Buffer): Promise<string> {
+  return buffer.toString('utf8')
 }
 ```
 
-**Two-tier extraction strategy:** We prefer `pdf-parse` for speed and reliability with copyable PDFs. If the extracted text is empty or too short (< 50 chars), we fall back to **Tesseract.js** OCR for scanned/image PDFs. For uploaded images (JPG/PNG), we go directly to Tesseract.js. Only error if *both* extraction paths fail.
+**Extraction strategy:** MVP assumes selectable-text PDFs. We use `pdf-parse` for PDFs and UTF-8 decoding for `.txt` files. If a PDF has no usable text, return a clear error telling the user to upload a selectable-text PDF. Image OCR is optional and outside the core demo path.
 
 ### `analyze.ts`
 Orchestrates the full analysis:
@@ -386,6 +373,7 @@ Orchestrates the full analysis:
 3. Validates against the Analysis schema
 4. Generates auditId (UUID)
 5. Returns complete Analysis object
+6. Enforces input length limits before sending text to the model
 
 ---
 
@@ -400,6 +388,12 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TWILIO_ACCOUNT_SID=your_twilio_sid
 TWILIO_AUTH_TOKEN=your_twilio_auth_token
 TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886  # Twilio sandbox number
+```
+
+Optional:
+```bash
+# Extension
+VITE_API_URL=https://hack-for-impact.vercel.app
 ```
 
 ---
@@ -433,14 +427,17 @@ Rules all agents must follow when writing code for this project:
 
 1. **All AI calls go through `@/lib/gemini.ts`** — never import `@google/generative-ai` directly in components or route handlers
 2. **All prompts live in `@/lib/prompts.ts`** — no inline prompt strings anywhere else
-3. **PDF/image extraction only via `@/lib/pdf.ts`** — OCR fallback uses Tesseract.js (already integrated in `pdf.ts`); do not add other OCR libraries
+3. **Document extraction only via `@/lib/pdf.ts`** — MVP supports selectable-text PDFs and `.txt`; do not assume OCR exists
 4. **API routes are thin** — validation + call lib function + return response. No business logic in route files.
 5. **Shared types from `@/lib/types.ts`** — never redefine Analysis, Clause, etc.
-6. **Extension calls the API** — extension has no AI logic itself; it only extracts text and calls `/api/analyze`
+6. **Extension calls the API** — extension has no AI logic itself; it extracts likely relevant page text and calls `/api/analyze`
 7. **Bot handlers are thin** — extract text from message, call `analyze()`, format response, reply
-8. **Language support**: pass `language` param to all Gemini calls. Gemini 2.5 Pro handles translation natively — no separate translation library needed
-9. **Reading level**: `eli5` = explain like I'm 5, `simple` = 6th grade, `standard` = adult, `expert` = professional
-10. **Never commit API keys** — use `.env.local` (gitignored) and Vercel env vars
+8. **Bots are document-only for the demo** — do not implement plain-text analysis in Telegram or WhatsApp
+9. **Input limits are mandatory** — truncate or reject oversized payloads before calling the model
+10. **Language support**: pass `language` param to all Gemini calls. Gemini 2.5 Pro handles translation natively — no separate translation library needed
+11. **Reading level**: `eli5` = explain like I'm 5, `simple` = 6th grade, `standard` = adult, `expert` = professional
+12. **Client-side session logs are not legal audit records** — do not describe them as tamper-proof or durable
+13. **Never commit API keys** — use `.env.local` (gitignored) and Vercel env vars
 
 ---
 
@@ -448,23 +445,24 @@ Rules all agents must follow when writing code for this project:
 
 ### Must Have (MVP)
 - [ ] Web: PDF upload + text extraction
+- [ ] Web: `.txt` upload + pasted text support
 - [ ] Web: Gemini analysis → risk score + summary + flagged clauses
 - [ ] Web: Risk meter UI component
 - [ ] Web: Plain language summary display
 - [ ] Web: Comprehension quiz (3 questions, must pass to consent)
-- [ ] Telegram bot: text analysis
-- [ ] WhatsApp bot: text analysis (Twilio sandbox)
+- [ ] Telegram bot: selectable-text PDF analysis
+- [ ] WhatsApp bot: selectable-text PDF analysis (Twilio sandbox)
 
 ### Should Have
-- [ ] Extension: content script reads page text
+- [ ] Extension: content script extracts likely legal page text
 - [ ] Extension: popup with risk score
 - [ ] Extension: sidebar with full analysis
 - [ ] Web: language picker (at minimum English + Hindi + Spanish)
 - [ ] Web: reading level slider
-- [ ] Web: audit trail timeline
+- [ ] Web: session activity timeline
 
 ### Nice to Have
-- [ ] Telegram bot: PDF document upload support
-- [ ] Web: downloadable consent receipt (PDF)
+- [ ] Web: image upload support
+- [ ] Web: downloadable session summary (PDF)
 - [ ] Extension: highlight dangerous text on the page itself
 - [ ] Web: animated transitions on results page
