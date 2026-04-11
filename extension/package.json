@@ -1,0 +1,22 @@
+{
+  "name": "hack-for-impact-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm run build:app && pnpm run build:content && pnpm run copy:manifest",
+    "build:app": "vite build",
+    "build:content": "vite build --config vite.content.config.ts",
+    "copy:manifest": "node -e \"require('fs').copyFileSync('manifest.json','dist/manifest.json')\"",
+    "dev": "pnpm run build:app -- --watch"
+  },
+  "dependencies": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.0",
+    "typescript": "^5",
+    "vite": "^7.1.7"
+  }
+}

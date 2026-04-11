@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Hack for Impact",
+  "version": "0.1.0",
+  "description": "Understand financial terms and consent flows before you agree.",
+  "action": {
+    "default_title": "Hack for Impact",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["activeTab", "storage", "scripting"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
