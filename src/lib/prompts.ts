@@ -1,16 +1,16 @@
 import type { AnalyzeRequest } from "@/lib/types";
 
 const READING_LEVEL_INSTRUCTIONS: Record<NonNullable<AnalyzeRequest["readingLevel"]>, string> = {
-  eli5: "Explain everything as if the reader is a child aged 5-8. Use very simple words and avoid jargon.",
-  simple: "Explain at about a 6th-grade reading level using short sentences and everyday words.",
-  standard: "Explain at an adult reading level with clear direct wording and brief term explanations.",
-  expert: "Assume the reader is a legal or financial professional and keep full technical precision.",
+  eli5: "Use very simple words a child can understand.",
+  simple: "6th-grade reading level, no jargon.",
+  standard: "Clear adult language, brief explanations of technical terms.",
+  expert: "Full legal/financial precision.",
 };
 
 const LANGUAGE_INSTRUCTIONS: Record<string, string> = {
-  en: "Respond entirely in English.",
-  hi: "Respond entirely in Hindi (Devanagari script).",
-  mr: "Respond entirely in Marathi (Devanagari script).",
+  en: "English",
+  hi: "Hindi (Devanagari)",
+  mr: "Marathi (Devanagari)",
 };
 
 export function buildAnalysisPrompt(
@@ -18,68 +18,27 @@ export function buildAnalysisPrompt(
   language: string = "en",
   readingLevel: NonNullable<AnalyzeRequest["readingLevel"]> = "simple",
 ): string {
-  const languageInstruction = LANGUAGE_INSTRUCTIONS[language] ?? LANGUAGE_INSTRUCTIONS.en;
-  const levelInstruction = READING_LEVEL_INSTRUCTIONS[readingLevel];
+  const lang = LANGUAGE_INSTRUCTIONS[language] ?? LANGUAGE_INSTRUCTIONS.en;
+  const level = READING_LEVEL_INSTRUCTIONS[readingLevel];
 
-  return `You are a financial document protection AI. Analyze the following document and return ONLY raw JSON.
-
-LANGUAGE: ${languageInstruction}
-READING LEVEL: ${levelInstruction}
+  return `Analyze this legal/financial document. Output language: ${lang}. Reading level: ${level}.
 
 DOCUMENT:
----
 ${text}
----
 
-Return this exact JSON shape:
-{
-  "summary": "string",
-  "riskScore": 0,
-  "riskLevel": "low",
-  "keyObligations": ["string"],
-  "hiddenClauses": [
-    {
-      "text": "string",
-      "explanation": "string",
-      "severity": "low",
-      "category": "string"
-    }
-  ],
-  "quiz": [
-    {
-      "question": "string",
-      "options": ["A", "B", "C", "D"],
-      "correctIndex": 0
-    }
-  ]
-}
+Return ONLY raw JSON (no markdown, no fences):
+{"summary":"2-3 paragraph plain-language summary","riskScore":0,"riskLevel":"low","keyObligations":["..."],"hiddenClauses":[{"text":"quote","explanation":"why concerning","severity":"low","category":"type"}],"quiz":[{"question":"...","options":["A","B","C","D"],"correctIndex":0},{"question":"...","options":["A","B","C","D"],"correctIndex":0},{"question":"...","options":["A","B","C","D"],"correctIndex":0}]}
 
-Rules:
-- riskScore must be an integer from 0 to 100.
-- riskLevel must match riskScore bands: 0-30 low, 31-60 medium, 61-80 high, 81-100 critical.
-- Provide 3-6 keyObligations.
-- Provide 2-6 hiddenClauses.
-- Provide exactly 3 quiz items, each with 4 options.
-- Output JSON only with no markdown or code fences.`;
+Rules: riskScore 0-30=low,31-60=medium,61-80=high,81-100=critical. riskLevel must match. Exactly 2 hiddenClauses. Exactly 3 keyObligations (short, starting with a verb). Exactly 3 quiz questions with 4 short options each. summary max 3 sentences. All values in ${lang}. Be concise.`
 }
 
 export function buildBotSummaryPrompt(text: string, language: string = "en"): string {
-  const languageInstruction = LANGUAGE_INSTRUCTIONS[language] ?? LANGUAGE_INSTRUCTIONS.en;
+  const lang = LANGUAGE_INSTRUCTIONS[language] ?? LANGUAGE_INSTRUCTIONS.en;
 
-  return `You are a financial document protection AI. Return ONLY raw JSON in the requested language.
-
-LANGUAGE: ${languageInstruction}
+  return `Analyze this document. Output language: ${lang}.
 
 DOCUMENT:
----
 ${text}
----
 
-Return this JSON object only:
-{
-  "riskScore": 0,
-  "riskLevel": "low",
-  "summary": "string",
-  "topWarnings": ["string", "string", "string"]
-}`;
+Return ONLY raw JSON: {"riskScore":0,"riskLevel":"low","summary":"1-2 sentences","topWarnings":["...","...","..."]}`;
 }
