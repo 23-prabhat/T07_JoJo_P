@@ -16,8 +16,15 @@ export async function generateContent(prompt: string): Promise<string> {
     },
     body: JSON.stringify({
       model: MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You analyze legal and financial text. Return only valid JSON grounded in the provided document. Do not invent clauses, risks, or obligations that are not visible in the text.",
+        },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.1,
       max_tokens: 1800,
     }),
   });

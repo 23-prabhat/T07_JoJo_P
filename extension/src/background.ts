@@ -95,6 +95,10 @@ async function handleAnalyzeRequest(message: AnalyzeRequestMessage, tabId?: numb
   });
 
   try {
+    if (!API_BASE_URL) {
+      throw new Error("The extension API URL is not configured.");
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/analyze`, {
       method: "POST",
       headers: {
@@ -127,8 +131,7 @@ async function handleAnalyzeRequest(message: AnalyzeRequestMessage, tabId?: numb
     await setAnalysisState(tabId, state);
     await sendMessageToTab(tabId, { type: "ANALYSIS_RESULT", data: payload });
   } catch (error) {
-    const messageText =
-      error instanceof Error ? error.message : "Something went wrong while analyzing this page.";
+    const messageText = getAnalyzeFailureMessage(error);
 
     await handleFailure(tabId, message.url, messageText);
   }
@@ -218,4 +221,16 @@ function isAnalysis(value: unknown): value is Analysis {
 
 function isRiskLevel(value: unknown): value is Analysis["riskLevel"] {
   return value === "low" || value === "medium" || value === "high" || value === "critical";
+}
+
+function getAnalyzeFailureMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Something went wrong while analyzing this page.";
+  }
+
+  if (error.message === "Failed to fetch") {
+    return `The extension could not reach ${API_BASE_URL}/api/analyze. Start the web app and reload the extension.`;
+  }
+
+  return error.message;
 }

@@ -3,6 +3,28 @@ import type { Analysis } from "../../src/lib/types";
 const MAX_TEXT_LENGTH = 8000;
 const MIN_TEXT_LENGTH = 200;
 const SIDEBAR_HOST_ID = "hack-for-impact-extension-root";
+const LEGAL_KEYWORDS = [
+  "agree",
+  "terms",
+  "policy",
+  "consent",
+  "privacy",
+  "payment",
+  "subscription",
+  "renew",
+  "fee",
+  "charge",
+  "cancel",
+  "trial",
+  "arbitration",
+  "liable",
+  "license",
+  "data",
+  "share",
+  "refund",
+  "terminate",
+  "billing",
+] as const;
 const SELECTOR_PRIORITY = [
   '[data-testid*="terms"]',
   '[class*="terms"]',
@@ -93,22 +115,64 @@ function handleTriggerAnalysis() {
 }
 
 function extractRelevantText(): string | null {
+  let bestMatch: { text: string; score: number } | null = null;
+
   for (const selector of SELECTOR_PRIORITY) {
     const elements = Array.from(document.querySelectorAll<HTMLElement>(selector));
 
     for (const element of elements) {
-      const cleaned = cleanText(element.textContent ?? "");
-      if (cleaned.length >= MIN_TEXT_LENGTH) {
-        return cleaned.slice(0, MAX_TEXT_LENGTH);
+      if (!isReadableElement(element)) {
+        continue;
+      }
+
+      const cleaned = cleanText(extractElementText(element));
+      if (cleaned.length < MIN_TEXT_LENGTH) {
+        continue;
+      }
+
+      const score = scoreCandidate(cleaned, selector);
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = {
+          text: cleaned.slice(0, MAX_TEXT_LENGTH),
+          score,
+        };
       }
     }
   }
 
-  return null;
+  return bestMatch?.text ?? null;
 }
 
 function cleanText(rawText: string): string {
-  return rawText.replace(/\s+/g, " ").trim();
+  return rawText
+    .replace(/\b(cookie preferences|accept all|reject all|sign in|log in|skip to content)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractElementText(element: HTMLElement): string {
+  const clone = element.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("script, style, noscript, svg, nav, footer, header, aside").forEach((node) => {
+    node.remove();
+  });
+  return clone.innerText || clone.textContent || "";
+}
+
+function isReadableElement(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden" && element.innerText.trim().length > 0;
+}
+
+function scoreCandidate(text: string, selector: string): number {
+  const lowerText = text.toLowerCase();
+  const keywordHits = LEGAL_KEYWORDS.reduce((count, keyword) => {
+    return count + (lowerText.includes(keyword) ? 1 : 0);
+  }, 0);
+  const selectorBoost =
+    selector === "article" || selector === "main" ? 2 : selector === "body" ? 0 : 5;
+  const lengthPenalty = text.length > 6000 ? 2 : 0;
+
+  return keywordHits * 5 + selectorBoost - lengthPenalty;
 }
 
 function ensureSidebar(): SidebarController {
@@ -280,7 +344,7 @@ function shortenText(text: string, maxLength: number): string {
     return normalized;
   }
 
-  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+  return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 function escapeHtml(value: string): string {

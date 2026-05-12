@@ -271,7 +271,7 @@ function getOneLineSummary(summary: string) {
   const normalized = summary.replace(/\s+/g, " ").trim();
   const firstSentence = normalized.split(/(?<=[.!?])\s/)[0];
   const oneLine = firstSentence || normalized;
-  return oneLine.length <= 140 ? oneLine : `${oneLine.slice(0, 139).trimEnd()}…`;
+  return oneLine.length <= 140 ? oneLine : `${oneLine.slice(0, 137).trimEnd()}...`;
 }
 
 const popupStyles = `
